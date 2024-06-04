@@ -11,8 +11,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install --upgrade pip && \
     python3 -m pip install --upgrade -r /requirements.txt
 
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m pip install peft
 # Setup for Option 2: Building the Image with the Model included
 ARG MODEL_NAME=""
+ARG LORA_NAME=""
 ARG TOKENIZER_NAME=""
 ARG BASE_PATH="/runpod-volume"
 ARG QUANTIZATION=""
@@ -23,6 +26,7 @@ ENV MODEL_NAME=$MODEL_NAME \
     MODEL_REVISION=$MODEL_REVISION \
     TOKENIZER_NAME=$TOKENIZER_NAME \
     TOKENIZER_REVISION=$TOKENIZER_REVISION \
+    LORA_NAME=$LORA_NAME \
     BASE_PATH=$BASE_PATH \
     QUANTIZATION=$QUANTIZATION \
     HF_DATASETS_CACHE="${BASE_PATH}/huggingface-cache/datasets" \
@@ -45,6 +49,6 @@ RUN --mount=type=secret,id=HF_TOKEN,required=false \
 COPY src /src
 # Remove download_model.py
 RUN rm /download_model.py
-
+# docker build --build-arg MODEL_NAME=your_model_name -t your_image_name .
 # Start the handler
 CMD ["python3", "/src/handler.py"]

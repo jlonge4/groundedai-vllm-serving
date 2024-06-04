@@ -8,6 +8,7 @@ from typing import AsyncGenerator
 import time
 
 from vllm import AsyncLLMEngine, AsyncEngineArgs
+from vllm.lora.request import LoRARequest
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
 from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
 from vllm.entrypoints.openai.protocol import ChatCompletionRequest, CompletionRequest, ErrorResponse
@@ -23,6 +24,7 @@ class vLLMEngine:
         self.config = EngineConfig().config
         self.tokenizer = TokenizerWrapper(self.config.get("tokenizer"), self.config.get("tokenizer_revision"), self.config.get("trust_remote_code"))
         self.llm = self._initialize_llm() if engine is None else engine
+        self.lora = self.config.get("lora")
         self.max_concurrency = int(os.getenv("MAX_CONCURRENCY", DEFAULT_MAX_CONCURRENCY))
         self.default_batch_size = int(os.getenv("DEFAULT_BATCH_SIZE", DEFAULT_BATCH_SIZE))
         self.batch_size_growth_factor = int(os.getenv("BATCH_SIZE_GROWTH_FACTOR", DEFAULT_BATCH_SIZE_GROWTH_FACTOR))
@@ -41,16 +43,20 @@ class vLLMEngine:
                 apply_chat_template=job_input.apply_chat_template,
                 request_id=job_input.request_id,
                 batch_size_growth_factor=job_input.batch_size_growth_factor,
-                min_batch_size=job_input.min_batch_size
+                min_batch_size=job_input.min_batch_size,
+                enable_lora=job_input.enable_lora,
             ):
                 yield batch
         except Exception as e:
             yield {"error": create_error_response(str(e)).model_dump()}
 
-    async def _generate_vllm(self, llm_input, validated_sampling_params, batch_size, stream, apply_chat_template, request_id, batch_size_growth_factor, min_batch_size: str) -> AsyncGenerator[dict, None]:
+    async def _generate_vllm(self, llm_input, validated_sampling_params, batch_size, stream, apply_chat_template, request_id, batch_size_growth_factor, min_batch_size: str, enable_lora: bool) -> AsyncGenerator[dict, None]:
         if apply_chat_template or isinstance(llm_input, list):
             llm_input = self.tokenizer.apply_chat_template(llm_input)
-        results_generator = self.llm.generate(llm_input, validated_sampling_params, request_id)
+        if enable_lora:
+            results_generator = self.llm.generate(llm_input, validated_sampling_params, request_id, lora_request=LoRARequest("toxicity_adapter", 1, "phi3-toxicity-judge"))
+        else:
+            results_generator = self.llm.generate(llm_input, validated_sampling_params, request_id)
         n_responses, n_input_tokens, is_first_output = validated_sampling_params.n, 0, True
         last_output_texts, token_counters = ["" for _ in range(n_responses)], {"batch": 0, "total": 0}
 
@@ -62,7 +68,7 @@ class vLLMEngine:
         batch_size_growth_factor, min_batch_size = batch_size_growth_factor or self.batch_size_growth_factor, min_batch_size or self.min_batch_size
         batch_size = BatchSize(max_batch_size, min_batch_size, batch_size_growth_factor)
     
-
+        #/root/.cache/huggingface/hub/models--grounded-ai--phi3-toxicity-judge/snapshots/c3829bab19ba850a00058aa69cb797a849ee8bd4
         async for request_output in results_generator:
             if is_first_output:  # Count input tokens only once
                 n_input_tokens = len(request_output.prompt_token_ids)

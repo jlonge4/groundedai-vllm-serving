@@ -1,56 +1,26 @@
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel, PeftConfig
+from pathlib import Path
 import os
-import shutil
-# from tensorize import serialize_model # TODO: Add back when tensorizer is implemented
-from huggingface_hub import snapshot_download
-from vllm.model_executor.model_loader.weight_utils import prepare_hf_model_weights, Disabledtqdm
 
+# Specify the names of the model and tokenizer
+model_name = os.getenv("MODEL_NAME")
+tokenizer_name = model_name
+lora_name = os.getenv("LORA_NAME")
 
-def download_extras_or_tokenizer(model_name, cache_dir, revision, extras=False):
-    """Download model or tokenizer and prepare its weights, returning the local folder path."""
-    pattern = ["*token*", "*.json"] if extras else None
-    extra_dir = "/extras" if extras else ""
-    folder = snapshot_download(
-        model_name,
-        cache_dir=cache_dir + extra_dir,
-        revision=revision,
-        tqdm_class=Disabledtqdm,
-        allow_patterns=pattern if extras else None,
-        ignore_patterns=["*.safetensors", "*.bin", "*.pt"] if not extras else None
-    )
-    return folder
+# Specify the directory to download the model, tokenizer, and LoRA adapter to
+download_dir = "/phi3-toxicity-judge/"
 
-def move_files(src_dir, dest_dir):
-    """Move files from source to destination directory."""
-    for f in os.listdir(src_dir):
-        src_path = os.path.join(src_dir, f)  
-        dst_path = os.path.join(dest_dir, f)         
-        shutil.copy2(src_path, dst_path)
-        os.remove(src_path)
-        
-if __name__ == "__main__":
-    model, download_dir = os.getenv("MODEL_NAME"), os.getenv("HF_HOME")
-    tokenizer = os.getenv("TOKENIZER_NAME") or model
+# Download the model
+model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
+model.save_pretrained(Path(download_dir+"model"))
 
-    revisions = {
-        "model": os.getenv("MODEL_REVISION") or None,
-        "tokenizer": os.getenv("TOKENIZER_REVISION") or None
-    }
+# Download the tokenizer
+tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
+tokenizer.save_pretrained(Path(download_dir+"tokenizer"))
 
-    if not model or not download_dir:
-        raise ValueError(f"Must specify model and download_dir. Model: {model}, download_dir: {download_dir}")
-
-    os.makedirs(download_dir, exist_ok=True)
-    model_folder, hf_weights_files, use_safetensors = prepare_hf_model_weights(model_name_or_path=model, revision=revisions["model"], cache_dir=download_dir)
-    model_extras_folder = download_extras_or_tokenizer(model, download_dir, revisions["model"], extras=True)
-    move_files(model_extras_folder, model_folder)
-    
-    # if os.environ.get("TENSORIZE_MODEL"): TODO: Add back when tensorizer is implemented
-        
-        
-
-    with open("/local_model_path.txt", "w") as f:
-        f.write(model_folder)
-
-    tokenizer_folder = download_extras_or_tokenizer(tokenizer, download_dir, revisions["tokenizer"])
-    with open("/local_tokenizer_path.txt", "w") as f:
-        f.write(tokenizer_folder)
+# Download the LoRA adapter
+# Note: This assumes that the LoRA adapter is a model on Hugging Face's model hub
+config = PeftConfig.from_pretrained(lora_name)
+lora = PeftModel.from_pretrained(lora_name, trust_remote_code=True)
+lora.save_pretrained(Path(download_dir+"lora"))
